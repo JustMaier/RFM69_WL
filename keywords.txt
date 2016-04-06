@@ -1,5 +1,5 @@
 #######################################
-# Syntax Coloring Map for RFM69_ATC
+# Syntax Coloring Map for RFM69_WL
 # uses keywords from RFM69 as well
 #######################################
 
@@ -10,20 +10,19 @@
 #######################################
 # Instances (KEYWORD2)
 #######################################
-RFM69_ATC	KEYWORD2
+RFM69_WL	KEYWORD2
 
 #######################################
 # Methods and Functions (KEYWORD2)
 #######################################
-setPowerLevel	KEYWORD2
-enableAutoPower	KEYWORD2
-getAckRSSI	KEYWORD2
-setLNA	KEYWORD2
-setMode	KEYWORD2
+startListening		KEYWORD2
+endListening		KEYWORD2
+setHighSpeedListen	KEYWORD2
+highSpeedListen		KEYWORD2
+sendBurst		KEYWORD2
+setListenDurations	KEYWORD2
 
 #######################################
 # Variables/Volatiles (LITERAL2)
 #######################################
-ACK_RSSI_REQUESTED	LITERAL2
-_targetRSSI	LITERAL2
-_transmitLevel	LITERAL2
+LISTEN_BURST_REMAINING_MS LITERAL2
