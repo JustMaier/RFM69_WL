@@ -9,6 +9,7 @@
 #define ADDRESS 1
 #define NETWORK_ID 1
 #define REMOTE_ADDRESS 2
+#define BURST_REPLY_TIMEOUT_MS 250
 
 RFM69_WL radio;
 
@@ -28,16 +29,32 @@ void loop() {
     return;
   }
 
-  byte cmd = Serial.read(); 
+  byte cmd = Serial.read();
   if (cmd == 'b') {
-    Serial.println("Sending wakeup burst...");
+    Serial.print("Sending wakeup burst...");
     radio.sendBurst(REMOTE_ADDRESS, payload, sizeof(payload));
-    Serial.println("Done");
+
+    bool replied = false;
+    long start = millis();
+    while (millis() - start < BURST_REPLY_TIMEOUT_MS) {
+      if (radio.receiveDone()) {
+        Serial.println("Success");
+        replied = true;
+        break;
+      }
+    }
+
+    if (!replied) {
+      Serial.println("Failed");
+    }
   }
 
   if (cmd == 'm') {
-    Serial.println("Sending normal message...");
-    radio.send(REMOTE_ADDRESS, payload, sizeof(payload));
-    Serial.println("Done");
+    Serial.print("Sending normal message...");
+    if (radio.sendWithRetry(REMOTE_ADDRESS, payload, sizeof(payload))) {
+      Serial.println("Success");
+    } else {
+      Serial.println("Failed");
+    }
   }
 }
