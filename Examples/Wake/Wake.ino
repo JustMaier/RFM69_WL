@@ -10,6 +10,7 @@
 #define NETWORK_ID 1
 #define REMOTE_ADDRESS 2
 #define BURST_REPLY_TIMEOUT_MS 250
+#define PAYLOAD_SIZE 12
 
 RFM69_WL radio;
 
@@ -22,7 +23,14 @@ void setup() {
   radio.encrypt(ENCRYPT_KEY);
 }
 
-char payload[] = "0123456789";
+char* buildPayload(void)
+{
+  static char payload[PAYLOAD_SIZE];
+  static uint8_t num;
+
+  snprintf(payload, PAYLOAD_SIZE, "Message %u", ++num);
+  return payload;
+}
 
 void loop() {
   if (!Serial.available()) {
@@ -32,7 +40,7 @@ void loop() {
   byte cmd = Serial.read();
   if (cmd == 'b') {
     Serial.print("Sending wakeup burst...");
-    radio.sendBurst(REMOTE_ADDRESS, payload, sizeof(payload));
+    radio.sendBurst(REMOTE_ADDRESS, buildPayload(), PAYLOAD_SIZE);
 
     bool replied = false;
     long start = millis();
@@ -51,7 +59,7 @@ void loop() {
 
   if (cmd == 'm') {
     Serial.print("Sending normal message...");
-    if (radio.sendWithRetry(REMOTE_ADDRESS, payload, sizeof(payload))) {
+    if (radio.sendWithRetry(REMOTE_ADDRESS, buildPayload(), PAYLOAD_SIZE)) {
       Serial.println("Success");
     } else {
       Serial.println("Failed");
