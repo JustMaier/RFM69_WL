@@ -1,5 +1,6 @@
 #include <RFM69_WL.h>
 #include <LowPower.h>
+#include <SPIFlash.h>
 
 // Uncomment the appropriate frequency for your hardware
 #define FREQUENCY     RF69_433MHZ
@@ -11,11 +12,16 @@
 #define NETWORK_ID 1
 
 RFM69_WL radio;
+SPIFlash flash(8, 0xEF30);
 
 void setup() {
   Serial.begin(9600);
   Serial.println("Listen Mode Example");
   Serial.println("Press 'l' to enter listen mode");
+
+  if (flash.initialize()) {
+    flash.sleep();
+  }
 
   radio.initialize(RF69_433MHZ, ADDRESS, NETWORK_ID);
   radio.encrypt(ENCRYPT_KEY);
