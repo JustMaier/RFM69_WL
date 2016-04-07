@@ -37,17 +37,13 @@
 
 volatile uint16_t RFM69_WL::LISTEN_BURST_REMAINING_MS = 0;
 
+
 //=============================================================================
 // initialize() - some extra initialization before calling base class
 //=============================================================================
 bool RFM69_WL::initialize(uint8_t freqBand, uint8_t address, uint8_t networkID)
 {
-  // Save these so we can re-init the radio after exiting burst or listen mode
-  _freqBand = freqBand;
-  _networkID = networkID;
-  _address = address;
-
-  if (!reinitRadio()) {
+  if (!RFM69::initialize(freqBand, address, networkID)) {
     return false;
   }
 
@@ -62,15 +58,6 @@ void RFM69_WL::receiveBegin()
   LISTEN_BURST_REMAINING_MS = 0;
 }
 
-void RFM69_WL::encrypt(const char* key)
-{
-  _haveEncryptKey = key;
-  RFM69::encrypt(key);
-  if (_haveEncryptKey) {
-    memcpy(_encryptKey, key, ENCRYPT_KEY_LENGTH);
-  }
-}
-
 //=============================================================================
 // abortListenMode() - exit listen mode and nothing else
 //=============================================================================
@@ -78,30 +65,8 @@ void RFM69_WL::abortListenMode()
 {
   writeReg(REG_OPMODE, RF_OPMODE_SEQUENCER_ON | RF_OPMODE_LISTENABORT | RF_OPMODE_STANDBY);
   writeReg(REG_OPMODE, RF_OPMODE_SEQUENCER_ON | RF_OPMODE_STANDBY);
-  writeReg(REG_RXTIMEOUT2, 0);
   setMode(RF69_MODE_STANDBY);
   while ((readReg(REG_IRQFLAGS1) & RF_IRQFLAGS1_MODEREADY) == 0x00); // wait for ModeReady
-}
-
-//=============================================================================
-// reinitRadio() - use base class initialization with saved values
-//=============================================================================
-bool RFM69_WL::reinitRadio()
-{
-  if (!RFM69::initialize(_freqBand, _address, _networkID)) {
-    return false;
-  }
-
-  // Restore the encryption key if necessary
-  if (_haveEncryptKey) {
-    RFM69::encrypt(_encryptKey);
-  }
-
-  if (_isHighSpeed) {
-    writeReg(REG_LNA, (readReg(REG_LNA) & ~0x3) | RF_LNA_GAINSELECT_AUTO);
-  }
-
-  return true;
 }
 
 static uint32_t getUsForResolution(byte resolution)
@@ -142,7 +107,7 @@ static bool chooseResolutionAndCoef(byte *resolutions, uint32_t duration, byte& 
 {
   for (int i = 0; resolutions[i]; i++) {
     uint32_t coef = getCoefForResolution(resolutions[i], duration);
-    if (coef <= 255) {
+    if (coef < 256) {
       coefOut = coef;
       resolOut = resolutions[i];
       return true;
@@ -158,6 +123,14 @@ bool RFM69_WL::setListenDurations(uint32_t& rxDuration, uint32_t& idleDuration)
   byte rxResolutions[] = { RF_LISTEN1_RESOL_RX_64, RF_LISTEN1_RESOL_RX_4100, RF_LISTEN1_RESOL_RX_262000, 0 };
   byte idleResolutions[] = { RF_LISTEN1_RESOL_IDLE_64, RF_LISTEN1_RESOL_IDLE_4100, RF_LISTEN1_RESOL_IDLE_262000, 0 };
 
+#ifdef RFM69_WL_DEBUG
+  Serial.print("Attempting to match RX duration ");
+  Serial.println(rxDuration, DEC);
+
+  Serial.print("Attempting to match idle duration ");
+  Serial.println(idleDuration);
+#endif
+
   if (!chooseResolutionAndCoef(rxResolutions, rxDuration, _rxListenResolution, _rxListenCoef)) {
     return false;
   }
@@ -169,6 +142,22 @@ bool RFM69_WL::setListenDurations(uint32_t& rxDuration, uint32_t& idleDuration)
   rxDuration = getUsForResolution(_rxListenResolution) * _rxListenCoef;
   idleDuration = getUsForResolution(_idleListenResolution) * _idleListenCoef;
   _listenCycleDurationUs = rxDuration + idleDuration;
+
+#ifdef RFM69_WL_DEBUG
+  Serial.print("RX resolution ");
+  Serial.println(_rxListenResolution, DEC);
+  Serial.print("RX coefficient ");
+  Serial.println(_rxListenCoef, DEC);
+  Serial.print("RX duration ");
+  Serial.println(getUsForResolution(_rxListenResolution) * (uint32_t)_rxListenCoef, DEC);
+
+  Serial.print("Idle resolution ");
+  Serial.println(_idleListenResolution, DEC);
+  Serial.print("Idle coefficient ");
+  Serial.println(_idleListenCoef, DEC);
+  Serial.print("Idle duration ");
+  Serial.println(getUsForResolution(_idleListenResolution) * (uint32_t)_idleListenCoef, DEC);
+#endif
 
   return true;
 }
@@ -270,47 +259,50 @@ void RFM69_WL::startListening(void)
   attachInterrupt(RF69_IRQ_NUM, irq, RISING);
   setMode(RF69_MODE_STANDBY);
 
-  writeReg(REG_DIOMAPPING1, RF_DIOMAPPING1_DIO0_01);
+  // _listenTransaction.pushReg(REG_DIOMAPPING1, RF_DIOMAPPING1_DIO0_01);
 
-  writeReg(REG_FRFMSB, readReg(REG_FRFMSB) + 1);
-  writeReg(REG_FRFLSB, readReg(REG_FRFLSB));      // MUST write to LSB to affect change!
+  _listenTransaction.pushReg(REG_FRFMSB, readReg(REG_FRFMSB) + 1);
+  _listenTransaction.pushReg(REG_FRFLSB, readReg(REG_FRFLSB));      // MUST write to LSB to affect change!
 
   if (_isHighSpeed) {
-    writeReg(REG_BITRATEMSB, RF_BITRATEMSB_200000);
-    writeReg(REG_BITRATELSB, RF_BITRATELSB_200000);
-    writeReg(REG_FDEVMSB, RF_FDEVMSB_300000);
-    writeReg(REG_FDEVLSB, RF_FDEVLSB_300000);
-    writeReg(REG_RXBW, RF_RXBW_DCCFREQ_000 | RF_RXBW_MANT_20 | RF_RXBW_EXP_0);
+    _listenTransaction.pushReg(REG_BITRATEMSB, RF_BITRATEMSB_200000);
+    _listenTransaction.pushReg(REG_BITRATELSB, RF_BITRATELSB_200000);
+    _listenTransaction.pushReg(REG_FDEVMSB, RF_FDEVMSB_300000);
+    _listenTransaction.pushReg(REG_FDEVLSB, RF_FDEVLSB_300000);
+    _listenTransaction.pushReg(REG_RXBW, RF_RXBW_DCCFREQ_000 | RF_RXBW_MANT_20 | RF_RXBW_EXP_0);
 
     // Force LNA to the highest gain
-    writeReg(REG_LNA, (readReg(REG_LNA) << 2) | RF_LNA_GAINSELECT_MAX);
+    _listenTransaction.pushReg(REG_LNA, (readReg(REG_LNA) & ~0x3) | RF_LNA_GAINSELECT_MAX);
   }
 
-  writeReg(REG_PACKETCONFIG1, RF_PACKET1_FORMAT_VARIABLE | RF_PACKET1_DCFREE_WHITENING | RF_PACKET1_CRC_ON | RF_PACKET1_CRCAUTOCLEAR_ON);
-  writeReg(REG_PACKETCONFIG2, RF_PACKET2_RXRESTARTDELAY_NONE | RF_PACKET2_AUTORXRESTART_ON | RF_PACKET2_AES_OFF);
-  writeReg(REG_SYNCVALUE1, 0x5A);
-  writeReg(REG_SYNCVALUE2, 0x5A);
-  writeReg(REG_LISTEN1, _rxListenResolution | _idleListenResolution |
-           RF_LISTEN1_CRITERIA_RSSI | RF_LISTEN1_END_10);
-  writeReg(REG_LISTEN2, _idleListenCoef);
-  writeReg(REG_LISTEN3, _rxListenCoef);
+  _listenTransaction.pushReg(REG_PACKETCONFIG1, RF_PACKET1_FORMAT_VARIABLE | RF_PACKET1_DCFREE_WHITENING | RF_PACKET1_CRC_ON | RF_PACKET1_CRCAUTOCLEAR_ON);
+  _listenTransaction.pushReg(REG_PACKETCONFIG2, RF_PACKET2_RXRESTARTDELAY_NONE | RF_PACKET2_AUTORXRESTART_ON | RF_PACKET2_AES_OFF);
+  _listenTransaction.pushReg(REG_SYNCVALUE1, 0x5A);
+  _listenTransaction.pushReg(REG_SYNCVALUE2, 0x5A);
+  _listenTransaction.pushReg(REG_LISTEN1, _rxListenResolution | _idleListenResolution |
+                             RF_LISTEN1_CRITERIA_RSSI | RF_LISTEN1_END_10);
+  _listenTransaction.pushReg(REG_LISTEN2, _idleListenCoef);
+  _listenTransaction.pushReg(REG_LISTEN3, _rxListenCoef);
 
-  writeReg(REG_RSSITHRESH, 200);
-  writeReg(REG_RXTIMEOUT2, 75);
+  _listenTransaction.pushReg(REG_RSSITHRESH, _rssiThreshold);
+  _listenTransaction.pushReg(REG_RXTIMEOUT2, 75);
 
+  // We want to handle these separately from the configuration above
   writeReg(REG_OPMODE, RF_OPMODE_SEQUENCER_ON | RF_OPMODE_STANDBY);
   writeReg(REG_OPMODE, RF_OPMODE_SEQUENCER_ON | RF_OPMODE_LISTEN_ON  | RF_OPMODE_STANDBY);
 }
 
 //=============================================================================
-// endListening() - exit listen mode and reinit the radio
+// endListening() - exit listen mode and return radio to normal operation
 //=============================================================================
 void RFM69_WL::endListening(void)
 {
-  detachInterrupt( RF69_IRQ_NUM );
+  _listenTransaction.revert();
   abortListenMode();
   resetListenReceive();
-  reinitRadio();
+
+  detachInterrupt(RF69_IRQ_NUM);
+  attachInterrupt(RF69_IRQ_NUM, RFM69::isr0, RISING);
 }
 
 //=============================================================================
@@ -321,21 +313,22 @@ void RFM69_WL::sendBurst( uint8_t targetNode, void* buffer, uint8_t size )
   detachInterrupt(RF69_IRQ_NUM);
   setMode(RF69_MODE_STANDBY);
 
-  writeReg(REG_PACKETCONFIG1, RF_PACKET1_FORMAT_VARIABLE | RF_PACKET1_DCFREE_WHITENING | RF_PACKET1_CRC_ON | RF_PACKET1_CRCAUTOCLEAR_ON );
-  writeReg(REG_PACKETCONFIG2, RF_PACKET2_RXRESTARTDELAY_NONE | RF_PACKET2_AUTORXRESTART_ON | RF_PACKET2_AES_OFF);
-  writeReg(REG_SYNCVALUE1, 0x5A);
-  writeReg(REG_SYNCVALUE2, 0x5A);
+  RegisterTransaction trans(this);
+  trans.pushReg(REG_PACKETCONFIG1, RF_PACKET1_FORMAT_VARIABLE | RF_PACKET1_DCFREE_WHITENING | RF_PACKET1_CRC_ON | RF_PACKET1_CRCAUTOCLEAR_ON );
+  trans.pushReg(REG_PACKETCONFIG2, RF_PACKET2_RXRESTARTDELAY_NONE | RF_PACKET2_AUTORXRESTART_ON | RF_PACKET2_AES_OFF);
+  trans.pushReg(REG_SYNCVALUE1, 0x5A);
+  trans.pushReg(REG_SYNCVALUE2, 0x5A);
 
   if (_isHighSpeed) {
-    writeReg(REG_BITRATEMSB, RF_BITRATEMSB_200000);
-    writeReg(REG_BITRATELSB, RF_BITRATELSB_200000);
-    writeReg(REG_FDEVMSB, RF_FDEVMSB_300000);
-    writeReg(REG_FDEVLSB, RF_FDEVLSB_300000);
-    writeReg(REG_RXBW, RF_RXBW_DCCFREQ_000 | RF_RXBW_MANT_20 | RF_RXBW_EXP_0);
+    trans.pushReg(REG_BITRATEMSB, RF_BITRATEMSB_200000);
+    trans.pushReg(REG_BITRATELSB, RF_BITRATELSB_200000);
+    trans.pushReg(REG_FDEVMSB, RF_FDEVMSB_300000);
+    trans.pushReg(REG_FDEVLSB, RF_FDEVLSB_300000);
+    trans.pushReg(REG_RXBW, RF_RXBW_DCCFREQ_000 | RF_RXBW_MANT_20 | RF_RXBW_EXP_0);
   }
 
-  writeReg(REG_FRFMSB, readReg(REG_FRFMSB) + 1);
-  writeReg(REG_FRFLSB, readReg(REG_FRFLSB));      // MUST write to LSB to affect change!
+  trans.pushReg(REG_FRFMSB, readReg(REG_FRFMSB) + 1);
+  trans.pushReg(REG_FRFLSB, readReg(REG_FRFLSB));      // MUST write to LSB to affect change!
 
   union // union to simplify addressing of long and short parts of time offset
   {
@@ -354,7 +347,6 @@ void RFM69_WL::sendBurst( uint8_t targetNode, void* buffer, uint8_t size )
 
   setMode(RF69_MODE_TX);
 
-  uint32_t numSent = 0;
   uint32_t startTime = millis();
   while(timeRemaining.l > 0) {
 
@@ -382,7 +374,7 @@ void RFM69_WL::sendBurst( uint8_t targetNode, void* buffer, uint8_t size )
   }
 
   setMode(RF69_MODE_STANDBY);
-  reinitRadio();
+  attachInterrupt(RF69_IRQ_NUM, RFM69::isr0, RISING);
 }
 
 

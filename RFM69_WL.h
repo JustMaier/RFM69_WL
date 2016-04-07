@@ -33,8 +33,10 @@
 #include "RFM69.h"
 
 // By default, receive for 256uS in listen mode and idle for ~1s
-#define  DEFAULT_LISTEN_RX_US 256
-#define  DEFAULT_LISTEN_IDLE_US 1000000
+#define DEFAULT_LISTEN_RX_US 256
+#define DEFAULT_LISTEN_IDLE_US 1000000
+#define DEFAULT_RSSI_THRESHOLD 160
+#define REGISTER_TRANSACTION_CAPACITY 32
 
 class RFM69_WL: public RFM69 {
   public:
@@ -45,7 +47,8 @@ class RFM69_WL: public RFM69 {
     RFM69_WL(uint8_t slaveSelectPin=RF69_SPI_CS, uint8_t interruptPin=RF69_IRQ_PIN, bool isRFM69HW=false, uint8_t interruptNum=RF69_IRQ_NUM)
       : RFM69(slaveSelectPin, interruptPin, isRFM69HW, interruptNum)
       , _isHighSpeed(true)
-      , _haveEncryptKey(false)
+      , _rssiThreshold(DEFAULT_RSSI_THRESHOLD)
+      , _listenTransaction(RegisterTransaction(this))
     {
       uint32_t rxDuration = DEFAULT_LISTEN_RX_US;
       uint32_t idleDuration = DEFAULT_LISTEN_IDLE_US;
@@ -62,9 +65,14 @@ class RFM69_WL: public RFM69 {
       _isHighSpeed = highSpeed;
     }
 
-    // Encryption is disabled in listen mode, and therefore when sending bursts as well.
-    // We override this to save the key in order to restore it when returning to normal operation.
-    void encrypt(const char* key);
+    // RSSI threshold used in listen mode
+    uint8_t rssiThreshold(void) {
+      return _rssiThreshold;
+    }
+
+    void setRssiThreshold(uint8_t threshold) {
+      _rssiThreshold = threshold;
+    }
 
     //=======================================================================
     // New methods to handle listen mode & burst wake up
@@ -94,20 +102,62 @@ class RFM69_WL: public RFM69 {
     void listenIrq(void);
 
   protected:
+    class RegisterTransaction
+    {
+    public:
+      RegisterTransaction(RFM69_WL* radio): _radio(radio), _length(0) {
+        memset(_pairs, 0, sizeof(RegisterPair) * REGISTER_TRANSACTION_CAPACITY);
+      }
+
+      bool pushReg(uint8_t reg, uint8_t value) {
+        if (_length == REGISTER_TRANSACTION_CAPACITY) {
+          return false;
+        }
+
+        uint8_t oldValue = _radio->readReg(reg);
+        _radio->writeReg(reg, value);
+        _pairs[_length++] = RegisterPair(reg, oldValue);
+        return true;
+      }
+
+      void revert(void) {
+        // Pop all of the registers in the original order
+        for (uint8_t i = 0; i < _length; i++) {
+          _radio->writeReg(_pairs[i].reg, _pairs[i].value);
+        }
+
+        _length = 0;
+      }
+
+      ~RegisterTransaction() {
+        revert();
+      }
+
+    protected:
+      struct RegisterPair {
+        RegisterPair() : reg(0), value(0) {}
+        RegisterPair(uint8_t reg, uint8_t value) : reg(reg), value(value) {}
+
+        uint8_t reg;
+        uint8_t value;
+      };
+
+      RFM69_WL* _radio;
+      RegisterPair _pairs[REGISTER_TRANSACTION_CAPACITY];
+      uint8_t _length;
+    };
+
+    friend class RegisterTransaction;
+
     virtual void receiveBegin() override;
 
     void abortListenMode(void);
-    bool reinitRadio(void);
     void resetListenReceive();
 
     bool _isHighSpeed;
-    bool _haveEncryptKey;
-    char _encryptKey[16];
+    uint8_t _rssiThreshold;
 
-    // Save these so we can reinitialize the radio after sending a burst
-    // or exiting listen mode.
-    uint8_t _freqBand;
-    uint8_t _networkID;
+    RegisterTransaction _listenTransaction;
 
     byte _rxListenCoef;
     byte _rxListenResolution;
