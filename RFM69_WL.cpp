@@ -244,9 +244,6 @@ out:
   interrupts();
 }
 
-//=============================================================================
-// startListening() - switch radio to Listen Mode in prep for sleep until burst
-//=============================================================================
 void RFM69_WL::startListening(void)
 {
   pRadio = this;
@@ -259,7 +256,7 @@ void RFM69_WL::startListening(void)
   attachInterrupt(RF69_IRQ_NUM, irq, RISING);
   setMode(RF69_MODE_STANDBY);
 
-  // _listenTransaction.pushReg(REG_DIOMAPPING1, RF_DIOMAPPING1_DIO0_01);
+  _listenTransaction.pushReg(REG_DIOMAPPING1, RF_DIOMAPPING1_DIO0_01);
 
   _listenTransaction.pushReg(REG_FRFMSB, readReg(REG_FRFMSB) + 1);
   _listenTransaction.pushReg(REG_FRFLSB, readReg(REG_FRFLSB));      // MUST write to LSB to affect change!
@@ -270,10 +267,10 @@ void RFM69_WL::startListening(void)
     _listenTransaction.pushReg(REG_FDEVMSB, RF_FDEVMSB_300000);
     _listenTransaction.pushReg(REG_FDEVLSB, RF_FDEVLSB_300000);
     _listenTransaction.pushReg(REG_RXBW, RF_RXBW_DCCFREQ_000 | RF_RXBW_MANT_20 | RF_RXBW_EXP_0);
-
-    // Force LNA to the highest gain
-    _listenTransaction.pushReg(REG_LNA, (readReg(REG_LNA) & ~0x3) | RF_LNA_GAINSELECT_MAX);
   }
+
+  // Force LNA to the highest gain
+  _listenTransaction.pushReg(REG_LNA, (readReg(REG_LNA) & ~0x3) | RF_LNA_GAINSELECT_MAX);
 
   _listenTransaction.pushReg(REG_PACKETCONFIG1, RF_PACKET1_FORMAT_VARIABLE | RF_PACKET1_DCFREE_WHITENING | RF_PACKET1_CRC_ON | RF_PACKET1_CRCAUTOCLEAR_ON);
   _listenTransaction.pushReg(REG_PACKETCONFIG2, RF_PACKET2_RXRESTARTDELAY_NONE | RF_PACKET2_AUTORXRESTART_ON | RF_PACKET2_AES_OFF);
@@ -292,22 +289,17 @@ void RFM69_WL::startListening(void)
   writeReg(REG_OPMODE, RF_OPMODE_SEQUENCER_ON | RF_OPMODE_LISTEN_ON  | RF_OPMODE_STANDBY);
 }
 
-//=============================================================================
-// endListening() - exit listen mode and return radio to normal operation
-//=============================================================================
-void RFM69_WL::endListening(void)
+bool RFM69_WL::endListening(void)
 {
   _listenTransaction.revert();
   abortListenMode();
-  resetListenReceive();
 
   detachInterrupt(RF69_IRQ_NUM);
   attachInterrupt(RF69_IRQ_NUM, RFM69::isr0, RISING);
+
+  return LISTEN_BURST_REMAINING_MS > 0 && DATALEN > 0;
 }
 
-//=============================================================================
-// sendBurst() - send a burst of packets to a sleeping listening node (or all)
-//=============================================================================
 void RFM69_WL::sendBurst( uint8_t targetNode, void* buffer, uint8_t size )
 {
   detachInterrupt(RF69_IRQ_NUM);

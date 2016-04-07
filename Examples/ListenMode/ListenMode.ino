@@ -46,25 +46,19 @@ void loop() {
 
     // Woke up, check for a message
     Serial.println("Woke up!");
-    uint8_t from = 0;
-    long burstRemaining = 0;
-    if (radio.DATALEN > 0) {
+
+    // Radio goes back to standby, ready for normal operations
+    if (radio.endListening()) {
       Serial.println("Received a message in listen mode");
       Serial.println((char*)radio.DATA);
       Serial.flush();
-      from = radio.SENDERID;
-      burstRemaining = radio.LISTEN_BURST_REMAINING_MS;
-    }
-
-    // Radio goes back to standby, ready for normal operations
-    radio.endListening();
-
-    if (from) {
+      long burstRemaining = radio.LISTEN_BURST_REMAINING_MS;
       while (burstRemaining > 0) {
         LowPower.powerDown(SLEEP_60MS, ADC_OFF, BOD_OFF);
         burstRemaining -= 60;
       }
-      radio.send(from, "woke", 4);
+
+      radio.send(radio.SENDERID, "woke", 4);
     }
   }
 }

@@ -35,7 +35,7 @@
 // By default, receive for 256uS in listen mode and idle for ~1s
 #define DEFAULT_LISTEN_RX_US 256
 #define DEFAULT_LISTEN_IDLE_US 1000000
-#define DEFAULT_RSSI_THRESHOLD 160
+#define DEFAULT_RSSI_THRESHOLD 170
 #define REGISTER_TRANSACTION_CAPACITY 32
 
 class RFM69_WL: public RFM69 {
@@ -86,7 +86,9 @@ class RFM69_WL: public RFM69 {
     void getListenDurations(uint32_t& rxDuration, uint32_t& idleDuration);
 
     void startListening(void);
-    void endListening(void);
+
+    // Return to normal operation, and returns true if a message was received
+    bool endListening(void);
 
     uint32_t listenCycleDurationUs() {
       return _listenCycleDurationUs;
