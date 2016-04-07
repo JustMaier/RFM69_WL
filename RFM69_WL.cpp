@@ -98,7 +98,7 @@ bool RFM69_WL::reinitRadio()
   }
 
   if (_isHighSpeed) {
-    writeReg(REG_LNA, (readReg(REG_LNA) << 2) | RF_LNA_GAINSELECT_AUTO);
+    writeReg(REG_LNA, (readReg(REG_LNA) & ~0x3) | RF_LNA_GAINSELECT_AUTO);
   }
 
   return true;
