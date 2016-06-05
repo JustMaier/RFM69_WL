@@ -1,7 +1,7 @@
 // **********************************************************************************
 // Automatic Transmit Power Control class derived from RFM69 library.
 // **********************************************************************************
-// Copyright Thomas Studwell (2014,2015)
+// Copyright Thomas Studwell (2014,2015), James Willcox (2016)
 // **********************************************************************************
 // License
 // **********************************************************************************
@@ -32,6 +32,8 @@
 #include <SPI.h>
 
 #define ENCRYPT_KEY_LENGTH 16
+
+#define BURST_CYCLE_PADDING_MS 50
 
 // #define RFM69_WL_DEBUG
 
@@ -141,7 +143,7 @@ bool RFM69_WL::setListenDurations(uint32_t& rxDuration, uint32_t& idleDuration)
 
   rxDuration = getUsForResolution(_rxListenResolution) * _rxListenCoef;
   idleDuration = getUsForResolution(_idleListenResolution) * _idleListenCoef;
-  _listenCycleDurationUs = rxDuration + idleDuration;
+  _listenCycleDurationMs = (rxDuration + idleDuration) / 1000;
 
 #ifdef RFM69_WL_DEBUG
   Serial.print("RX resolution ");
@@ -217,20 +219,26 @@ void RFM69_WL::listenIrq(void)
   PAYLOADLEN = PAYLOADLEN > 66 ? 66 : PAYLOADLEN; // precaution
   TARGETID = SPI.transfer(0);
   if(!(_promiscuousMode || TARGETID == _address || TARGETID == RF69_BROADCAST_ADDR) // match this node's address, or broadcast address or anything in promiscuous mode
-     || PAYLOADLEN < 3) // address situation could receive packets that are malformed and don't fit this library's extra fields
+     || PAYLOADLEN < 4) // address situation could receive packets that are malformed and don't fit this library's extra fields
   {
     resetListenReceive();
     goto out;
   }
 
-  // We've read the target, and will read the sender id and two time offset bytes for a total of 4 bytes
-  DATALEN = PAYLOADLEN - 4;
   SENDERID = SPI.transfer(0);
-
   burstRemaining.b[0] =  SPI.transfer(0);  // and get the time remaining
   burstRemaining.b[1] =  SPI.transfer(0);
 
+  // We've read the target, sender id, and the burst time remaining for a total of 4 bytes
+  DATALEN = PAYLOADLEN - 4;
+
   LISTEN_BURST_REMAINING_MS = burstRemaining.l;
+
+  // if (LISTEN_BURST_REMAINING_MS > (_listenCycleDurationMs + BURST_CYCLE_PADDING_MS)) {
+  //   // This happened to me with a presumably bad radio, but still a good sanity check
+  //   resetListenReceive();
+  //   return;
+  // }
 
   for (uint8_t i = 0; i < DATALEN; i++) {
     DATA[i] = SPI.transfer(0);
@@ -248,8 +256,7 @@ void RFM69_WL::startListening(void)
 {
   pRadio = this;
 
-  while (readReg(REG_IRQFLAGS2) & RF_IRQFLAGS2_PACKETSENT == 0x00); // wait for ModeReady
-
+  abortListenMode();
   resetListenReceive();
 
   detachInterrupt(RF69_IRQ_NUM);
@@ -273,7 +280,9 @@ void RFM69_WL::startListening(void)
   _listenTransaction.pushReg(REG_LNA, (readReg(REG_LNA) & ~0x3) | RF_LNA_GAINSELECT_MAX);
 
   _listenTransaction.pushReg(REG_PACKETCONFIG1, RF_PACKET1_FORMAT_VARIABLE | RF_PACKET1_DCFREE_WHITENING | RF_PACKET1_CRC_ON | RF_PACKET1_CRCAUTOCLEAR_ON);
-  _listenTransaction.pushReg(REG_PACKETCONFIG2, RF_PACKET2_RXRESTARTDELAY_NONE | RF_PACKET2_AUTORXRESTART_ON | RF_PACKET2_AES_OFF);
+
+  uint8_t aesConfig = readReg(REG_PACKETCONFIG2) & RF_PACKET2_AES_ON;
+  _listenTransaction.pushReg(REG_PACKETCONFIG2, RF_PACKET2_RXRESTARTDELAY_NONE | RF_PACKET2_AUTORXRESTART_ON | aesConfig);
   _listenTransaction.pushReg(REG_SYNCVALUE1, 0x5A);
   _listenTransaction.pushReg(REG_SYNCVALUE2, 0x5A);
   _listenTransaction.pushReg(REG_LISTEN1, _rxListenResolution | _idleListenResolution |
@@ -291,23 +300,39 @@ void RFM69_WL::startListening(void)
 
 bool RFM69_WL::endListening(void)
 {
-  _listenTransaction.revert();
-  abortListenMode();
-
   detachInterrupt(RF69_IRQ_NUM);
   attachInterrupt(RF69_IRQ_NUM, RFM69::isr0, RISING);
+
+  _listenTransaction.revert();
+  abortListenMode();
 
   return LISTEN_BURST_REMAINING_MS > 0 && DATALEN > 0;
 }
 
-void RFM69_WL::sendBurst( uint8_t targetNode, void* buffer, uint8_t size )
+// We send:
+// Payload size
+// Target node
+// Sender node
+// Two bytes for the burst time remaining
+#define BURST_MSG_HEADER_SIZE 5
+
+
+void RFM69_WL::sendBurst(uint8_t targetNode, void* buffer, uint8_t size, uint16_t durationMs)
 {
   detachInterrupt(RF69_IRQ_NUM);
   setMode(RF69_MODE_STANDBY);
 
   RegisterTransaction trans(this);
   trans.pushReg(REG_PACKETCONFIG1, RF_PACKET1_FORMAT_VARIABLE | RF_PACKET1_DCFREE_WHITENING | RF_PACKET1_CRC_ON | RF_PACKET1_CRCAUTOCLEAR_ON );
-  trans.pushReg(REG_PACKETCONFIG2, RF_PACKET2_RXRESTARTDELAY_NONE | RF_PACKET2_AUTORXRESTART_ON | RF_PACKET2_AES_OFF);
+
+  uint8_t aesConfig = readReg(REG_PACKETCONFIG2) & RF_PACKET2_AES_ON;
+  trans.pushReg(REG_PACKETCONFIG2, RF_PACKET2_RXRESTARTDELAY_NONE | RF_PACKET2_AUTORXRESTART_ON | aesConfig);
+
+  // We don't want the radio to start transmitting until we fill the FIFO with our entire message, so
+  // so set the FIFO threshold to one less than the message size. The radio processes the FIFO when
+  // the threshold has one more than the threshold value.
+  trans.pushReg(REG_FIFOTHRESH, RF_FIFOTHRESH_TXSTART_FIFOTHRESH | (size + BURST_MSG_HEADER_SIZE - 1));
+
   trans.pushReg(REG_SYNCVALUE1, 0x5A);
   trans.pushReg(REG_SYNCVALUE2, 0x5A);
 
@@ -328,12 +353,16 @@ void RFM69_WL::sendBurst( uint8_t targetNode, void* buffer, uint8_t size )
     uint8_t b[4];
   } timeRemaining;
 
-  uint16_t cycleDurationMs = _listenCycleDurationUs / 1000;
-  timeRemaining.l = cycleDurationMs;
+  if (durationMs == 0) {
+    // No duration specified, use a default based on the cycle duration
+    durationMs = _listenCycleDurationMs + BURST_CYCLE_PADDING_MS;
+  }
+
+  timeRemaining.l = durationMs;
 
 #ifdef RFM69_WL_DEBUG
   Serial.print("Sending burst for ");
-  Serial.print(cycleDurationMs, DEC);
+  Serial.print(durationMs, DEC);
   Serial.println(" ms");
 #endif
 
@@ -341,6 +370,14 @@ void RFM69_WL::sendBurst( uint8_t targetNode, void* buffer, uint8_t size )
 
   uint32_t startTime = millis();
   while(timeRemaining.l > 0) {
+    // make sure packet is sent before putting more into the FIFO
+    while ((readReg(REG_IRQFLAGS2) & RF_IRQFLAGS2_FIFONOTEMPTY) != 0) {
+      timeRemaining.l = (int32_t)durationMs - (millis() - startTime);
+      if (timeRemaining.l < 0) {
+        // We probably got stuck here, bail out
+        break;
+      }
+    }
 
     noInterrupts();
     // write to FIFO
@@ -361,9 +398,10 @@ void RFM69_WL::sendBurst( uint8_t targetNode, void* buffer, uint8_t size )
     unselect();
     interrupts();
 
-    while ((readReg(REG_IRQFLAGS2) & RF_IRQFLAGS2_FIFONOTEMPTY) != 0x00);  // make sure packet is sent before putting more into the FIFO
-    timeRemaining.l = cycleDurationMs - (millis() - startTime);
+    timeRemaining.l = (int32_t)durationMs - (millis() - startTime);
   }
+
+  trans.revert();
 
   setMode(RF69_MODE_STANDBY);
   attachInterrupt(RF69_IRQ_NUM, RFM69::isr0, RISING);

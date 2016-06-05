@@ -90,8 +90,8 @@ class RFM69_WL: public RFM69 {
     // Return to normal operation, and returns true if a message was received
     bool endListening(void);
 
-    uint32_t listenCycleDurationUs() {
-      return _listenCycleDurationUs;
+    uint32_t listenCycleDurationMs() {
+      return _listenCycleDurationMs;
     }
 
     // This repeatedly sends the message to the target node for the duration
@@ -99,7 +99,7 @@ class RFM69_WL: public RFM69 {
     // is transmitted to the receiver, and it is expected that the receiver
     // wait for the burst to end before attempting a reply.
     // See LISTEN_BURST_REMAINING_MS above.
-    void sendBurst(uint8_t targetNode, void* buffer, uint8_t size);
+    void sendBurst(uint8_t targetNode, void* buffer, uint8_t size, uint16_t durationMs=0);
 
     void listenIrq(void);
 
@@ -167,7 +167,7 @@ class RFM69_WL: public RFM69 {
     byte _idleListenCoef;
     byte _idleListenResolution;
 
-    uint32_t _listenCycleDurationUs;
+    uint32_t _listenCycleDurationMs;
 };
 
 #endif
