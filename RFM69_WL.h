@@ -44,7 +44,7 @@ class RFM69_WL: public RFM69 {
     // You need to wait at least this long before trying to reply.
     static volatile uint16_t LISTEN_BURST_REMAINING_MS;
 
-    RFM69_WL(uint8_t slaveSelectPin=RF69_SPI_CS, uint8_t interruptPin=RF69_IRQ_PIN, bool isRFM69HW=false, uint8_t interruptNum=RF69_IRQ_NUM)
+    RFM69_WL(uint8_t slaveSelectPin=RF69_SPI_CS, uint8_t interruptPin=RF69_IRQ_PIN, bool isRFM69HW=false, uint8_t interruptNum=RF69_IRQ_PIN)
       : RFM69(slaveSelectPin, interruptPin, isRFM69HW, interruptNum)
       , _isHighSpeed(true)
       , _rssiThreshold(DEFAULT_RSSI_THRESHOLD)

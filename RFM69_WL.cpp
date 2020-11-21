@@ -218,7 +218,7 @@ void RFM69_WL::listenIrq(void)
   PAYLOADLEN = SPI.transfer(0);
   PAYLOADLEN = PAYLOADLEN > 66 ? 66 : PAYLOADLEN; // precaution
   TARGETID = SPI.transfer(0);
-  if(!(_promiscuousMode || TARGETID == _address || TARGETID == RF69_BROADCAST_ADDR) // match this node's address, or broadcast address or anything in promiscuous mode
+  if(!(TARGETID == _address || TARGETID == RF69_BROADCAST_ADDR) // match this node's address, or broadcast address or anything in promiscuous mode
      || PAYLOADLEN < 4) // address situation could receive packets that are malformed and don't fit this library's extra fields
   {
     resetListenReceive();
@@ -259,8 +259,8 @@ void RFM69_WL::startListening(void)
   abortListenMode();
   resetListenReceive();
 
-  detachInterrupt(RF69_IRQ_NUM);
-  attachInterrupt(RF69_IRQ_NUM, irq, RISING);
+  detachInterrupt(RF69_IRQ_PIN);
+  attachInterrupt(RF69_IRQ_PIN, irq, RISING);
   setMode(RF69_MODE_STANDBY);
 
   _listenTransaction.pushReg(REG_DIOMAPPING1, RF_DIOMAPPING1_DIO0_01);
@@ -300,8 +300,8 @@ void RFM69_WL::startListening(void)
 
 bool RFM69_WL::endListening(void)
 {
-  detachInterrupt(RF69_IRQ_NUM);
-  attachInterrupt(RF69_IRQ_NUM, RFM69::isr0, RISING);
+  detachInterrupt(RF69_IRQ_PIN);
+  attachInterrupt(RF69_IRQ_PIN, RFM69::isr0, RISING);
 
   _listenTransaction.revert();
   abortListenMode();
@@ -319,7 +319,7 @@ bool RFM69_WL::endListening(void)
 
 void RFM69_WL::sendBurst(uint8_t targetNode, void* buffer, uint8_t size, uint16_t durationMs)
 {
-  detachInterrupt(RF69_IRQ_NUM);
+  detachInterrupt(RF69_IRQ_PIN);
   setMode(RF69_MODE_STANDBY);
 
   RegisterTransaction trans(this);
@@ -404,7 +404,7 @@ void RFM69_WL::sendBurst(uint8_t targetNode, void* buffer, uint8_t size, uint16_
   trans.revert();
 
   setMode(RF69_MODE_STANDBY);
-  attachInterrupt(RF69_IRQ_NUM, RFM69::isr0, RISING);
+  attachInterrupt(RF69_IRQ_PIN, RFM69::isr0, RISING);
 }
 
 
